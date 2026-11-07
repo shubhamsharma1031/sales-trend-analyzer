@@ -1,5 +1,7 @@
 # Sales Trend Analyzer
 
+![Cover](docs/cover.png)
+
 End-to-end sales analysis of an Indian retail business (2023–2024): data cleaning in **Python**, business questions answered in **SQL (MySQL)**, and an interactive **Power BI** dashboard built with **DAX**.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
@@ -60,6 +62,8 @@ Power BI          →  interactive dashboard (DAX measures)
 ```
 
 ## Data cleaning
+
+![Cleaning output](docs/cleaning_output.png)
 
 The raw file contains the problems you see in real data. `src/clean_data.py` fixes them:
 
