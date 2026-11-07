@@ -1,0 +1,179 @@
+"""
+Exploratory analysis of the cleaned sales data.
+
+Calculates the main KPIs, finds trends and saves:
+- outputs/charts/*.png  (charts used in the README)
+- outputs/insights.md   (key findings in plain language)
+
+Run:  python src/analysis.py
+"""
+
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+CLEAN = ROOT / "data" / "clean" / "sales_clean.csv"
+OUT = ROOT / "outputs"
+CHARTS = OUT / "charts"
+
+COLORS = ["#2563eb", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"]
+plt.rcParams.update({
+    "figure.dpi": 120, "axes.spines.top": False, "axes.spines.right": False,
+    "axes.titleweight": "bold", "axes.titlesize": 13, "font.size": 10,
+})
+
+
+def inr(x):
+    """Format a number in Indian style: lakh (L) and crore (Cr)."""
+    if abs(x) >= 1e7:
+        return f"₹{x / 1e7:.2f} Cr"
+    if abs(x) >= 1e5:
+        return f"₹{x / 1e5:.2f} L"
+    return f"₹{x:,.0f}"
+
+
+def kpis(df):
+    sales, profit = df["sales"].sum(), df["profit"].sum()
+    return {
+        "Total Sales": sales,
+        "Total Profit": profit,
+        "Profit Margin": profit / sales,
+        "Orders": df["order_id"].nunique(),
+        "Customers": df["customer_id"].nunique(),
+        "Average Order Value": sales / df["order_id"].nunique(),
+    }
+
+
+def yoy(df):
+    by_year = df.groupby("order_year")[["sales", "profit"]].sum()
+    y1, y2 = by_year.index.min(), by_year.index.max()
+    return by_year, (by_year.loc[y2, "sales"] / by_year.loc[y1, "sales"] - 1)
+
+
+def chart_monthly_trend(df):
+    m = df.groupby(["order_year", "order_month"])["sales"].sum().unstack(0) / 1e5
+    fig, ax = plt.subplots(figsize=(9, 4.2))
+    for i, year in enumerate(m.columns):
+        ax.plot(m.index, m[year], marker="o", lw=2.2, color=COLORS[i], label=str(year))
+    ax.set_xticks(range(1, 13), ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
+    ax.set_ylabel("Sales (₹ lakh)")
+    ax.set_title("Monthly sales trend, 2023 vs 2024")
+    ax.grid(axis="y", alpha=.25)
+    ax.legend(frameon=False)
+    fig.tight_layout()
+    fig.savefig(CHARTS / "monthly_sales_trend.png")
+    plt.close(fig)
+
+
+def chart_category(df):
+    c = df.groupby("category")[["sales", "profit"]].sum().sort_values("sales") / 1e5
+    fig, ax = plt.subplots(figsize=(8, 4))
+    y = range(len(c))
+    ax.barh([i + 0.2 for i in y], c["sales"], height=0.4, color=COLORS[0], label="Sales")
+    ax.barh([i - 0.2 for i in y], c["profit"], height=0.4, color=COLORS[2], label="Profit")
+    ax.set_yticks(list(y), c.index)
+    ax.set_xlabel("₹ lakh")
+    ax.set_title("Sales and profit by category")
+    ax.legend(frameon=False, loc="lower right")
+    ax.grid(axis="x", alpha=.25)
+    fig.tight_layout()
+    fig.savefig(CHARTS / "category_sales_profit.png")
+    plt.close(fig)
+
+
+def chart_region(df):
+    r = df.groupby("region")["sales"].sum().sort_values(ascending=False) / 1e5
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bars = ax.bar(r.index, r.values, color=COLORS[0])
+    ax.bar_label(bars, fmt="%.0f L", padding=3)
+    ax.set_ylabel("Sales (₹ lakh)")
+    ax.set_title("Sales by region")
+    ax.grid(axis="y", alpha=.25)
+    fig.tight_layout()
+    fig.savefig(CHARTS / "region_sales.png")
+    plt.close(fig)
+
+
+def chart_discount(df):
+    d = df.groupby("discount").agg(margin=("profit", "sum"), sales=("sales", "sum"))
+    d["margin"] = d["margin"] / d["sales"] * 100
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bars = ax.bar([f"{int(x * 100)}%" for x in d.index], d["margin"],
+                  color=[COLORS[2] if v >= 0 else COLORS[3] for v in d["margin"]])
+    ax.bar_label(bars, fmt="%.1f%%", padding=3)
+    ax.set_ylim(min(d["margin"].min() * 1.6, -2), d["margin"].max() * 1.15)
+    ax.axhline(0, color="#444", lw=.8)
+    ax.set_xlabel("Discount")
+    ax.set_ylabel("Profit margin (%)")
+    ax.set_title("Profit margin falls as discount rises (30% = loss)")
+    fig.tight_layout()
+    fig.savefig(CHARTS / "discount_vs_margin.png")
+    plt.close(fig)
+
+
+def write_insights(df):
+    k = kpis(df)
+    by_year, growth = yoy(df)
+    cat = df.groupby("category").agg(sales=("sales", "sum"), profit=("profit", "sum"))
+    cat["margin"] = cat["profit"] / cat["sales"]
+    cat["share"] = cat["sales"] / cat["sales"].sum()
+    reg = df.groupby("region")["sales"].sum().sort_values(ascending=False)
+    month = df.groupby("order_month")["sales"].sum()
+    festive_share = month.loc[[10, 11]].sum() / month.sum()
+    disc = df.groupby(df["discount"] >= 0.2).apply(lambda g: g["profit"].sum() / g["sales"].sum(), include_groups=False)
+    sub = df.groupby(["category", "sub_category"])["profit"].sum().sort_values()
+    top_city = df.groupby("city")["sales"].sum().sort_values(ascending=False).head(5)
+
+    lines = [
+        "# Key insights (sample dataset, 2023–2024)",
+        "",
+        "> Generated by `src/analysis.py` from the synthetic sample data in this repository.",
+        "",
+        "## KPIs",
+        "",
+        "| KPI | Value |", "|---|---|",
+        f"| Total sales | {inr(k['Total Sales'])} |",
+        f"| Total profit | {inr(k['Total Profit'])} |",
+        f"| Profit margin | {k['Profit Margin']:.1%} |",
+        f"| Orders | {k['Orders']:,} |",
+        f"| Customers | {k['Customers']:,} |",
+        f"| Average order value | {inr(k['Average Order Value'])} |",
+        f"| Sales growth 2024 vs 2023 | {growth:+.1%} |",
+        "",
+        "## Findings",
+        "",
+        f"1. **Festive season drives sales.** October and November together bring in {festive_share:.0%} of yearly sales, "
+        "so stock and marketing budgets should be planned around this period.",
+        f"2. **{cat['share'].idxmax()} is the biggest category** with {cat['share'].max():.0%} of sales, "
+        f"but **{cat['margin'].idxmax()}** has the best profit margin ({cat['margin'].max():.1%}).",
+        f"3. **Deep discounts wipe out profit.** Orders at 20% or more discount have a margin of "
+        f"{disc.get(True, 0):.1%}, compared with {disc.get(False, 0):.1%} for orders below 20%, "
+        "and 30% discounts are loss-making.",
+        f"4. **{reg.index[0]} is the top region** ({inr(reg.iloc[0])}), while **{reg.index[-1]}** is the smallest "
+        f"({inr(reg.iloc[-1])}), which points to a growth opportunity.",
+        f"5. **Weakest sub-category by profit:** {sub.index[0][1]} ({sub.index[0][0]}) with total profit of {inr(sub.iloc[0])}.",
+        "",
+        "## Top 5 cities by sales",
+        "",
+        "| City | Sales |", "|---|---|",
+        *[f"| {c} | {inr(v)} |" for c, v in top_city.items()],
+        "",
+    ]
+    (OUT / "insights.md").write_text("\n".join(lines), encoding="utf-8")
+    return lines
+
+
+if __name__ == "__main__":
+    CHARTS.mkdir(parents=True, exist_ok=True)
+    data = pd.read_csv(CLEAN, parse_dates=["order_date", "ship_date"])
+    chart_monthly_trend(data)
+    chart_category(data)
+    chart_region(data)
+    chart_discount(data)
+    print("\n".join(write_insights(data)))
+    print(f"\nCharts saved to {CHARTS}")
